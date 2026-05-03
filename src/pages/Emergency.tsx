@@ -397,17 +397,23 @@ export default function Emergency() {
   }
 
   return (
-    <div className="bg-[var(--color-medical-bg)] flex flex-col h-screen overflow-hidden relative">
+    <div className="bg-[var(--color-medical-bg)] flex flex-col h-screen overflow-hidden relative font-sans">
+      {/* Global Scanline Effect */}
+      <div className="fixed inset-0 pointer-events-none z-[100] opacity-[0.03] overflow-hidden">
+        <div className="absolute inset-x-0 h-4 bg-white/20 blur-xl animate-[scanline_4s_linear_infinite]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,128,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]" />
+      </div>
+
       <header className="bg-slate-900 px-6 pt-16 pb-8 text-white shrink-0 relative overflow-hidden z-30 shadow-2xl">
         <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
         
         <div className="flex justify-between items-start mb-6 relative z-10">
           <div className="space-y-1">
             <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_10px_#ef4444]" />
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Live Active Incident</span>
             </motion.div>
-            <h1 className="text-4xl font-black tracking-tighter uppercase font-display leading-none">{type || 'Emergency'}</h1>
+            <h1 className="text-4xl font-black tracking-tighter uppercase font-display leading-none underline decoration-red-600/30 underline-offset-8 decoration-4">{type || 'Emergency'}</h1>
             <p className="text-white/50 font-mono text-[10px] tracking-tight">INCIDENT_ID_{emergencyId?.slice(-6).toUpperCase() || 'PND'}</p>
           </div>
           
@@ -430,9 +436,57 @@ export default function Emergency() {
           </div>
         </div>
         
-        <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-sm font-medium leading-relaxed text-white/80 max-w-xl border-l-2 border-red-600 pl-4 py-1">
+        <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-sm font-medium leading-relaxed text-white/80 max-w-xl border-l-2 border-red-600 pl-4 py-1 italic mb-8">
           {localizedSummary}
         </motion.p>
+
+        {/* Vitals HUD Section */}
+        <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 relative z-10">
+            <div className="flex-none bg-white/5 backdrop-blur-md rounded-2xl p-4 border border-white/5 min-w-[124px]">
+               <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                  <Activity size={10} className="text-red-500" /> RES/RATE
+               </p>
+               <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-white font-mono">112</span>
+                  <span className="text-[8px] text-slate-400 font-bold uppercase">BPM</span>
+               </div>
+               <div className="mt-2 h-1 bg-slate-800 rounded-full overflow-hidden">
+                  <motion.div 
+                    animate={{ width: ['40%', '85%', '40%'] }} 
+                    transition={{ duration: 4, repeat: Infinity }} 
+                    className="h-full bg-red-600 shadow-[0_0_10px_#dc2626]" 
+                  />
+               </div>
+            </div>
+            
+            <div className="flex-none bg-white/5 backdrop-blur-md rounded-2xl p-4 border border-white/5 min-w-[124px]">
+               <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                  <Heart size={10} className="text-red-500" /> STRESS_LVL
+               </p>
+               <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-white font-mono font-display">HIGH</span>
+               </div>
+               <div className="mt-2 h-1 bg-slate-800 rounded-full overflow-hidden">
+                  <motion.div 
+                    animate={{ width: ['70%', '95%', '70%'] }} 
+                    transition={{ duration: 2, repeat: Infinity }} 
+                    className="h-full bg-orange-600 shadow-[0_0_10px_#ea580c]" 
+                  />
+               </div>
+            </div>
+
+            <div className="flex-none bg-white/5 backdrop-blur-md rounded-2xl p-4 border border-white/5 min-w-[124px]">
+               <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                  <Shield size={10} className="text-blue-400" /> GPS_LOCK
+               </p>
+               <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-white font-mono font-display text-[14px]">SATELLITE_4</span>
+               </div>
+               <div className="mt-2 flex gap-1">
+                  {[1,2,3,4,5].map(i => <div key={i} className={`h-1 flex-1 rounded-full ${i <= 4 ? 'bg-blue-400' : 'bg-slate-700 shadow-inner'}`} />)}
+               </div>
+            </div>
+        </div>
         
         <button onClick={() => navigate('/')} className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors">
           <RotateCcw size={20} />
@@ -452,6 +506,57 @@ export default function Emergency() {
                <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Guide Synchronized</span>
             </div>
           </div>
+
+          {/* Smart Protocol Awareness Section */}
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-10 px-1"
+          >
+            {(() => {
+              const themes: Record<string, any> = {
+                [EmergencyCategory.FIRE]: { bg: 'bg-orange-950', accent: 'bg-orange-600', text: 'text-orange-500', ring: 'ring-orange-600/20' },
+                [EmergencyCategory.MEDICAL]: { bg: 'bg-slate-900', accent: 'bg-red-600', text: 'text-red-500', ring: 'ring-red-600/20' },
+                [EmergencyCategory.ACCIDENT]: { bg: 'bg-blue-950', accent: 'bg-blue-600', text: 'text-blue-500', ring: 'ring-blue-600/20' },
+                [EmergencyCategory.OTHER]: { bg: 'bg-slate-900', accent: 'bg-slate-700', text: 'text-slate-400', ring: 'ring-white/10' },
+              };
+              const theme = themes[activeCategory] || themes[EmergencyCategory.OTHER];
+              const Icon = SERVICE_NUMBERS[activeCategory]?.icon || ShieldAlert;
+
+              return (
+                <div className={`${theme.bg} rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group border border-white/5`}>
+                  <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform">
+                    <Icon size={140} strokeWidth={1} />
+                  </div>
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className={`px-3 py-1 ${theme.accent} rounded-full`}>
+                        <span className="text-[8px] font-black text-white uppercase tracking-widest leading-none">Smart_Protocol_Active</span>
+                      </div>
+                      <div className="h-px w-8 bg-white/20" />
+                    </div>
+                    <h3 className="text-3xl font-black text-white uppercase tracking-tighter font-display leading-tight mb-2">
+                      {activeCategory.replace('_', ' ')}_IDENTIFIED
+                    </h3>
+                    <p className="text-sm text-white/50 font-medium mb-8 max-w-sm leading-relaxed">
+                      System has autonomously branched to <span className="text-white font-bold">{activeCategory}</span> triage protocols. Dedicated official channel <span className={`${theme.text} font-bold`}>{SERVICE_NUMBERS[activeCategory]?.number}</span> is prepared and locked for deployment.
+                    </p>
+                    
+                    <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/5 backdrop-blur-sm">
+                      <div className={`w-12 h-12 ${theme.accent} rounded-xl flex items-center justify-center text-white shadow-xl ${theme.ring}`}>
+                        <PhoneCall size={20} strokeWidth={2.5} />
+                      </div>
+                      <div>
+                        <p className="text-[8px] font-black text-white/40 uppercase tracking-[0.2em] mb-1">OFFICIAL_SERVICE_READY</p>
+                        <p className="text-xl font-black text-white tracking-widest font-mono">CHANNEL_{SERVICE_NUMBERS[activeCategory]?.number}</p>
+                      </div>
+                      <div className={`ml-auto w-2 h-2 ${theme.text.replace('text-', 'bg-')} rounded-full animate-ping`} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </motion.div>
           
           <div className="space-y-10">
              {aiAdvice.map((step, idx) => {
@@ -464,8 +569,13 @@ export default function Emergency() {
                    whileInView={{ opacity: 1, y: 0 }}
                    viewport={{ once: true, margin: "-50px" }}
                    animate={{ scale: isNarrating ? 1.02 : 1, borderColor: isNarrating ? '#dc2626' : '#f1f5f9' }}
-                   className={`tech-card overflow-hidden transition-all duration-500 bg-white border-2 border-slate-100 ${isNarrating ? 'ring-8 ring-red-600/5 border-red-600' : 'shadow-lg shadow-slate-200/50'}`}
+                   className={`tech-card overflow-hidden transition-all duration-500 bg-white border-2 border-slate-100 relative ${isNarrating ? 'ring-8 ring-red-600/5 border-red-600' : 'shadow-lg shadow-slate-200/50'}`}
                  >
+                    {/* Technical HUD Borders */}
+                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-red-600/20 z-20 pointer-events-none" />
+                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-red-600/20 z-20 pointer-events-none" />
+                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-red-600/20 z-20 pointer-events-none" />
+                    
                     {/* Visual Section */}
                     <div className="relative aspect-video max-h-[400px] w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-slate-100">
                        {step.visualUrl ? (
@@ -608,20 +718,27 @@ export default function Emergency() {
           </div>
         </section>
       </div>
-    </div>
 
       <footer className="p-6 bg-white border-t border-slate-100 grid grid-cols-[1fr,64px] gap-4 shrink-0 shadow-[0_-20px_50px_rgba(0,0,0,0.1)] relative z-30">
-          <a 
-            href={`tel:${SERVICE_NUMBERS[activeCategory]?.number || '112'}`} 
-            className={`btn-emergency h-16 transition-all duration-500 scale-100 ${activeCategory === EmergencyCategory.FIRE ? 'bg-orange-600 animate-pulse' : ''}`}
-          >
-            <PhoneCall size={20} strokeWidth={2.5} />
-            DIAL_{SERVICE_NUMBERS[activeCategory]?.label || 'EMERGENCY_LINK'}
-          </a>
+          <div className="relative group/sos">
+            <motion.div 
+               animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0, 0.3] }}
+               transition={{ duration: 2, repeat: Infinity }}
+               className={`absolute inset-x-0 inset-y-0 rounded-3xl pointer-events-none ${activeCategory === EmergencyCategory.FIRE ? 'bg-orange-600' : 'bg-red-600'}`}
+            />
+            <a 
+              href={`tel:${SERVICE_NUMBERS[activeCategory]?.number || '112'}`} 
+              className={`btn-emergency h-16 w-full relative z-10 transition-all duration-500 scale-100 ${activeCategory === EmergencyCategory.FIRE ? 'bg-orange-600' : ''}`}
+            >
+              <PhoneCall size={20} strokeWidth={2.5} />
+              DIAL_{SERVICE_NUMBERS[activeCategory]?.label || 'EMERGENCY_LINK'}
+            </a>
+          </div>
           <button onClick={() => navigate('/hospitals')} className="w-full h-16 bg-slate-100 hover:bg-slate-200 rounded-2xl flex items-center justify-center text-slate-900 transition-all active:scale-95 border border-slate-200">
             <MapPin size={24} strokeWidth={2.5} />
           </button>
       </footer>
+    </div>
 
       {/* Emergency Contacts Modal */}
       <AnimatePresence>
