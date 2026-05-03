@@ -1,0 +1,6 @@
+{
+  "name": "RescuAI",
+  "description": "AI-powered emergency assistance system with instant SOS, AI triage, guided first-aid, and hospital locator.",
+  "requestFramePermissions": ["geolocation", "camera", "microphone"],
+  "majorCapabilities": []
+}

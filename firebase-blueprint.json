@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account and medical information",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "emergencyContacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "bloodGroup": { "type": "string" },
+        "medicalConditions": { "type": "string" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fullName", "phoneNumber", "emergencyContacts"]
+    },
+    "Emergency": {
+      "title": "Emergency Event",
+      "description": "Information about an active or past emergency",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["medical", "accident", "fire", "breathing", "bleeding", "other"] },
+        "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+        "location": {
+          "type": "object",
+          "properties": {
+            "latitude": { "type": "number" },
+            "longitude": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "voiceInput": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "resolved", "cancelled"] },
+        "assistancesteps": {
+          "type": "array",
+          "items": { "type": "integer" }
+        }
+      },
+      "required": ["userId", "type", "location", "timestamp", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Public user profiles"
+    },
+    "/emergencies/{emergencyId}": {
+      "schema": "Emergency",
+      "description": "Collection of emergency records"
+    }
+  }
+}
