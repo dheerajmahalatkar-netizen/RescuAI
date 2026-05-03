@@ -1,13 +1,23 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, ShieldCheck, HeartPulse, ArrowRight } from 'lucide-react';
-import { auth, RecaptchaVerifier, signInWithPhoneNumber } from '../lib/firebase';
+import { Phone, ShieldCheck, HeartPulse, ArrowRight, Mail, Lock, LogIn, UserPlus, Activity, ShieldAlert, Globe } from 'lucide-react';
+import { 
+  auth, 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  googleProvider, 
+  signInWithPopup,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword 
+} from '../lib/firebase';
 import { ConfirmationResult } from 'firebase/auth';
 
 export default function Auth() {
+  const [mode, setMode] = useState<'method-selection' | 'phone' | 'otp' | 'email-login' | 'email-signup'>('method-selection');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -23,6 +33,37 @@ export default function Auth() {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Google sign-in failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailAuth = async () => {
+    if (!email || !password) return setError('Enter credentials');
+    setError('');
+    setLoading(true);
+    try {
+      if (mode === 'email-signup') {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Auth failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSendOtp = async () => {
     if (!phoneNumber) return setError('Enter a phone number');
     setError('');
@@ -33,7 +74,7 @@ export default function Auth() {
       const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
       const result = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
       setConfirmationResult(result);
-      setStep('otp');
+      setMode('otp');
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to send OTP');
@@ -56,110 +97,217 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col p-8">
+    <div className="min-h-screen bg-slate-900 flex flex-col p-8 overflow-hidden relative">
       <div id="recaptcha-container"></div>
       
-      <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full">
-        <div className="mb-12">
-          <div className="w-16 h-16 bg-red-600 rounded-3xl flex items-center justify-center text-white mb-6 shadow-xl shadow-red-200">
-            <HeartPulse size={32} />
+      {/* Background decorations */}
+      <div className="absolute top-0 right-0 w-96 h-96 bg-red-600/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+      <div className="absolute bottom-0 left-0 w-96 h-96 bg-slate-800/50 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" />
+      
+      <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full relative z-10">
+        <header className="mb-12">
+          <motion.div 
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="w-20 h-20 bg-red-600 rounded-[2.5rem] flex items-center justify-center text-white mb-8 shadow-2xl shadow-red-600/20"
+          >
+            <Activity size={44} strokeWidth={2.5} />
+          </motion.div>
+          <div className="space-y-1">
+             <p className="text-red-500 font-mono text-[10px] font-black uppercase tracking-[0.4em]">Initialize_Sequence</p>
+             <h1 className="text-5xl font-black tracking-tighter text-white uppercase font-display italic">RescuAI</h1>
+             <p className="text-white/40 font-medium text-sm leading-tight max-w-[200px]">Next-gen clinical protocol access.</p>
           </div>
-          <h1 className="text-4xl font-black tracking-tighter text-gray-900 mb-2">RescuAI</h1>
-          <p className="text-gray-500 font-medium">Fast access to life-saving tools.</p>
-        </div>
+        </header>
 
         <AnimatePresence mode="wait">
-          {step === 'phone' ? (
+          {mode === 'method-selection' && (
             <motion.div
-              key="phone"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
+              key="selection"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-6"
             >
-              <div className="space-y-4 mb-8">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1 block">Phone Number</label>
-                  <div className="relative">
-                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                    <input
-                      type="tel"
-                      placeholder="+91 12345 67890"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl py-4 pl-12 pr-4 focus:ring-2 focus:ring-red-600 focus:border-transparent outline-none transition-all font-semibold"
-                    />
-                  </div>
-                </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <button
+                   onClick={() => setMode('phone')}
+                   className="tech-card bg-white/5 border-white/5 hover:bg-white hover:text-slate-900 p-6 flex flex-col items-center gap-3 group transition-all"
+                 >
+                   <Phone size={24} className="text-red-500 group-hover:text-red-600 transition-colors" />
+                   <span className="text-[10px] font-black uppercase tracking-widest font-mono">Mobile_ID</span>
+                 </button>
+                 <button
+                   onClick={() => setMode('email-login')}
+                   className="tech-card bg-white/5 border-white/5 hover:bg-white hover:text-slate-900 p-6 flex flex-col items-center gap-3 group transition-all"
+                 >
+                   <Mail size={24} className="text-red-500 group-hover:text-red-600 transition-colors" />
+                   <span className="text-[10px] font-black uppercase tracking-widest font-mono">Terminal_ID</span>
+                 </button>
               </div>
 
-              {error && <p className="text-red-600 text-sm mb-4 font-medium">{error}</p>}
+              <div className="relative py-4 flex items-center">
+                 <div className="flex-1 h-px bg-white/5" />
+                 <span className="px-4 text-[9px] font-black text-white/20 uppercase tracking-[0.3em]">Secure_Link_Option</span>
+                 <div className="flex-1 h-px bg-white/5" />
+              </div>
 
               <button
+                onClick={handleGoogleSignIn}
                 disabled={loading}
-                onClick={handleSendOtp}
-                className="w-full bg-black text-white rounded-2xl py-5 font-bold text-lg flex items-center justify-center gap-2 group disabled:opacity-50"
+                className="w-full h-18 bg-white text-slate-900 rounded-[2rem] flex items-center justify-center gap-4 font-black transition-all active:scale-95 shadow-2xl disabled:opacity-50"
               >
-                {loading ? 'Sending...' : 'Send Magic OTP'}
-                <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                <Globe size={24} className="text-red-600" />
+                <span className="font-display tracking-tight text-xl uppercase">Google_Sync</span>
               </button>
             </motion.div>
-          ) : (
-            <motion.div
-              key="otp"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-            >
-              <div className="space-y-4 mb-8">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1 block">Verification Code</label>
+          )}
+
+          {mode === 'phone' && (
+            <motion.div key="phone" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}>
+              <div className="mb-8">
+                 <p className="text-red-500 font-mono text-[9px] font-black uppercase tracking-[0.4em] mb-2">AUTH_PHASE: MOBILE</p>
+                 <h2 className="text-3xl font-black text-white uppercase tracking-tighter font-display">CELLULAR_LINK</h2>
+              </div>
+              
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1 font-mono">Phone_Sequence</label>
                   <div className="relative">
-                    <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                    <Phone className="absolute left-6 top-1/2 -translate-y-1/2 text-white/20" size={20} />
                     <input
-                      type="number"
-                      placeholder="Enter 6-digit code"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                      className="w-full bg-gray-50 border border-gray-200 rounded-2xl py-4 pl-12 pr-4 focus:ring-2 focus:ring-red-600 focus:border-transparent outline-none transition-all font-semibold tracking-[0.5em] text-center text-xl"
+                      type="tel"
+                      placeholder="+91_NODE_ENDPOINT"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      className="w-full bg-white/5 border border-white/5 rounded-[2rem] py-6 pl-16 pr-6 focus:bg-white/10 focus:border-red-500/50 outline-none transition-all font-bold text-white tracking-widest"
                     />
                   </div>
                 </div>
+
+                {error && <p className="text-red-500 text-xs font-bold leading-relaxed px-2 uppercase tracking-tight">{error}</p>}
+
+                <button
+                  disabled={loading}
+                  onClick={handleSendOtp}
+                  className="w-full h-18 bg-red-600 text-white rounded-[2rem] font-black text-xl flex items-center justify-center gap-4 transition-all active:scale-95 shadow-2xl shadow-red-600/20 disabled:opacity-50 font-display"
+                >
+                  {loading ? 'Transmitting...' : 'ESTABLISH_LINK'}
+                  <ArrowRight size={22} />
+                </button>
+
+                <button onClick={() => setMode('method-selection')} className="w-full py-4 text-white/20 font-black uppercase text-[10px] tracking-[0.3em] hover:text-white transition-colors">
+                  Abort_Handshake
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {mode === 'otp' && (
+            <motion.div key="otp" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}>
+              <div className="mb-8">
+                 <p className="text-red-500 font-mono text-[9px] font-black uppercase tracking-[0.4em] mb-2">AUTH_PHASE: VERIFY</p>
+                 <h2 className="text-3xl font-black text-white uppercase tracking-tighter font-display">SECURITY_CODE</h2>
               </div>
 
-              {error && <p className="text-red-600 text-sm mb-4 font-medium">{error}</p>}
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1 font-mono">Verification_Sequence</label>
+                  <div className="relative">
+                    <ShieldCheck className="absolute left-6 top-1/2 -translate-y-1/2 text-white/20" size={20} />
+                    <input
+                      type="number"
+                      placeholder="000000"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      className="w-full bg-white/5 border border-white/5 rounded-[2rem] py-6 pl-16 pr-6 focus:bg-white/10 focus:border-red-500/50 outline-none transition-all font-bold text-white tracking-[1em] text-center text-3xl font-display"
+                    />
+                  </div>
+                </div>
 
-              <button
-                disabled={loading}
-                onClick={handleVerifyOtp}
-                className="w-full bg-red-600 text-white rounded-2xl py-5 font-bold text-lg shadow-xl shadow-red-200 disabled:opacity-50"
-              >
-                {loading ? 'Verifying...' : 'Continue to Dashboard'}
-              </button>
+                {error && <p className="text-red-500 text-xs font-bold leading-relaxed px-2 uppercase tracking-tight">{error}</p>}
 
-              <button
-                onClick={() => setStep('phone')}
-                className="w-full mt-4 text-gray-400 font-bold uppercase tracking-widest text-xs"
-              >
-                Change Number
-              </button>
+                <button
+                  disabled={loading}
+                  onClick={handleVerifyOtp}
+                  className="w-full h-18 bg-emerald-600 text-white rounded-[2rem] font-black text-xl flex items-center justify-center gap-4 transition-all active:scale-95 shadow-2xl shadow-emerald-600/20 disabled:opacity-50 font-display"
+                >
+                  {loading ? 'Verifying...' : 'GRANT_ACCESS'}
+                </button>
+
+                <button onClick={() => setMode('phone')} className="w-full py-4 text-white/20 font-black uppercase text-[10px] tracking-[0.3em] hover:text-white transition-colors">
+                  Retry_Sequence
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {(mode === 'email-login' || mode === 'email-signup') && (
+            <motion.div key="email" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}>
+              <div className="mb-8">
+                 <p className="text-red-500 font-mono text-[9px] font-black uppercase tracking-[0.4em] mb-2">AUTH_PHASE: TERMINAL</p>
+                 <h2 className="text-3xl font-black text-white uppercase tracking-tighter font-display">
+                    {mode === 'email-signup' ? 'NEW_ACCOUNT' : 'LOG_IN'}
+                 </h2>
+              </div>
+              
+              <div className="space-y-6">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1 font-mono">Terminal_ID</label>
+                  <input
+                    type="email"
+                    placeholder="clinical_relay@endpoint.io"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-white/5 border border-white/5 rounded-2xl p-5 focus:bg-white/10 outline-none transition-all font-bold text-white text-sm"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 px-1 font-mono">Access_Key</label>
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-white/5 border border-white/5 rounded-2xl p-5 focus:bg-white/10 outline-none transition-all font-bold text-white text-sm"
+                  />
+                </div>
+
+                {error && <p className="text-red-500 text-xs font-bold leading-relaxed px-2 uppercase tracking-tight">{error}</p>}
+
+                <button
+                  disabled={loading}
+                  onClick={handleEmailAuth}
+                  className="w-full h-16 bg-white text-slate-900 rounded-2xl font-black text-lg shadow-2xl active:scale-95 transition-all uppercase font-display"
+                >
+                  {loading ? 'Processing...' : (mode === 'email-signup' ? 'REGISTER_NODE' : 'ACCESS_TERMINAL')}
+                </button>
+
+                <div className="flex flex-col gap-4 mt-6">
+                  <button onClick={() => setMode(mode === 'email-signup' ? 'email-login' : 'email-signup')} className="text-[10px] font-black text-red-500 uppercase tracking-widest hover:text-red-400">
+                    {mode === 'email-signup' ? 'Shift to Login Protocol' : 'Shift to Registry Protocol'}
+                  </button>
+                  <button onClick={() => setMode('method-selection')} className="text-[10px] font-black text-white/20 uppercase tracking-widest hover:text-white/40">
+                    Other Channels
+                  </button>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <p className="mt-12 text-xs text-gray-400 text-center leading-relaxed">
-          By continuing, you agree to our <span className="underline">Terms of Service</span> and <span className="underline">Privacy Policy</span>. Standard message rates apply.
-        </p>
-
-        {/* FOR PREVIEW PURPOSES: Demo Bypass */}
-        <div className="mt-8 pt-8 border-t border-gray-100 hidden">
-           <p className="text-[10px] text-gray-300 uppercase tracking-widest text-center mb-2">Preview Only</p>
-           <button 
-             onClick={() => alert("Simulation point: Usually you'd use a real phone. For now, try with your actual number!")}
-             className="w-full text-gray-400 text-[10px] uppercase font-bold"
-           >
-             Having trouble? Ensure you are in a new tab.
-           </button>
-        </div>
+        <footer className="mt-20">
+           <div className="p-6 bg-white/5 rounded-[2rem] border border-white/5">
+              <p className="text-[10px] text-white/30 text-center leading-relaxed font-medium uppercase tracking-[0.05em]">
+                Secure clinical data channel initialized. By mounting this link, you acknowledge safety protocols and residency in compliant regions.
+              </p>
+           </div>
+           <div className="mt-6 flex justify-center gap-4 text-white/10">
+              <ShieldCheck size={16} />
+              <Activity size={16} />
+              <Globe size={16} />
+           </div>
+        </footer>
       </div>
     </div>
   );

@@ -25,6 +25,29 @@ export interface UserProfile {
   emergencyContacts: string[]; // List of phone numbers or JSON strings
   bloodGroup?: string;
   medicalConditions?: string;
+  language?: string;
+  gender?: 'Male' | 'Female' | 'Other' | 'Prefer not to say';
+  age?: number;
+  height?: string;
+  onMedication?: boolean;
+  medicationDetails?: string;
+  underDiagnosis?: boolean;
+  diagnosisDetails?: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  timestamp: number;
+}
+
+export interface FirstAidStep {
+  title: string;
+  description: string;
+  icon?: string; // Lucide icon name or type
+  visualUrl?: string;
+  visualPrompt?: string;
+  narration?: string; // Localized narration for the step
 }
 
 export interface LocationData {
@@ -44,5 +67,9 @@ export interface EmergencyRecord {
   voiceInput?: string;
   imageUrl?: string;
   status: 'active' | 'resolved' | 'cancelled';
-  assistanceSteps?: number[];
+  assistanceSteps?: string[];
+  firstAidAdvice?: FirstAidStep[];
+  language?: string;
+  chatHistory?: ChatMessage[];
+  notes?: string;
 }

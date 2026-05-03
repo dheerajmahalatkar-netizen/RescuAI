@@ -3,266 +3,720 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronRight, 
-  ChevronLeft, 
   Mic, 
   Camera, 
   PhoneCall, 
   MapPin, 
   AlertTriangle,
-  Play,
   RotateCcw,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Globe,
+  Send,
+  MessageSquare,
+  Activity,
+  Heart,
+  Shield,
+  Thermometer,
+  Droplets,
+  AlertCircle,
+  Info,
+  Volume2,
+  Pause,
+  Users,
+  X,
+  Flame,
+  ShieldAlert,
+  Car,
+  Wind
 } from 'lucide-react';
-import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { useSpeech } from '../hooks/useSpeech';
-import { FIRST_AID_STEPS } from '../lib/firstAidData';
-import { EmergencyCategory, SeverityLevel } from '../types';
-import { classifyEmergency } from '../services/geminiService';
+import { EmergencyCategory, SeverityLevel, FirstAidStep, ChatMessage } from '../types';
+import { analyzeEmergency, getAIChatResponse, generateVisual } from '../services/geminiService';
+
+const LANGUAGES = [
+  { code: 'en', name: 'English', label: 'English', bcp47: 'en-US' },
+  { code: 'hi', name: 'Hindi', label: 'हिन्दी', bcp47: 'hi-IN' },
+  { code: 'bn', name: 'Bengali', label: 'বাংলা', bcp47: 'bn-IN' },
+  { code: 'te', name: 'Telugu', label: 'తెలుగు', bcp47: 'te-IN' },
+  { code: 'mr', name: 'Marathi', label: 'मରାઠી', bcp47: 'mr-IN' },
+  { code: 'ta', name: 'Tamil', label: 'தமிழ்', bcp47: 'ta-IN' },
+  { code: 'gu', name: 'Gujarati', label: 'ગુજરાતી', bcp47: 'gu-IN' },
+  { code: 'kn', name: 'Kannada', label: 'ಕನ್ನಡ', bcp47: 'kn-IN' },
+  { code: 'ml', name: 'Malayalam', label: 'മലയാളം', bcp47: 'ml-IN' },
+  { code: 'pa', name: 'Punjabi', label: 'ਪੰਜਾਬੀ', bcp47: 'pa-IN' },
+  { code: 'or', name: 'Odia', label: 'ଓଡ଼ିଆ', bcp47: 'or-IN' },
+  { code: 'as', name: 'Assamese', label: 'অসমীয়া', bcp47: 'as-IN' },
+];
+
+const ICON_MAP: Record<string, any> = {
+  Activity, Heart, Shield, Thermometer, Droplets, AlertCircle, Info, CheckCircle2, Volume2, Pause
+};
+
+const SERVICE_NUMBERS: Record<string, { label: string; number: string; icon: any }> = {
+  [EmergencyCategory.FIRE]: { label: 'FIRE_DEPARTMENT', number: '101', icon: Flame },
+  [EmergencyCategory.MEDICAL]: { label: 'AMBULANCE_ER', number: '102', icon: Activity },
+  [EmergencyCategory.ACCIDENT]: { label: 'POLICE_QUICK', number: '100', icon: Car },
+  [EmergencyCategory.BREATHING]: { label: 'ER_AMBULANCE', number: '108', icon: Wind },
+  [EmergencyCategory.BLEEDING]: { label: 'ER_AMBULANCE', number: '102', icon: Activity },
+  [EmergencyCategory.OTHER]: { label: 'NATIONAL_SOS', number: '112', icon: ShieldAlert },
+};
 
 export default function Emergency() {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
-  const { speak, startListening, isListening, transcript } = useSpeech();
+  const { speak, startListening, clearTranscript, isListening, transcript } = useSpeech();
   
-  const [step, setStep] = useState(0);
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [severity, setSeverity] = useState<SeverityLevel>(SeverityLevel.HIGH);
+  const [flow, setFlow] = useState<'language' | 'input' | 'analyzing' | 'guidance'>('language');
+  const [language, setLanguage] = useState(LANGUAGES[0]);
+  const [description, setDescription] = useState('');
+  const [image, setImage] = useState<string | null>(null);
   const [emergencyId, setEmergencyId] = useState<string | null>(null);
-  const [notes, setNotes] = useState('');
-  const [isCapturing, setIsCapturing] = useState(false);
+  const [severity, setSeverity] = useState<SeverityLevel>(SeverityLevel.HIGH);
+  const [aiAdvice, setAiAdvice] = useState<FirstAidStep[]>([]);
+  const [visualsLoading, setVisualsLoading] = useState<Record<number, boolean>>({});
+  const loadingIndices = useRef<Set<number>>(new Set());
+  const [localizedSummary, setLocalizedSummary] = useState('');
+  const [isAutoNarrating, setIsAutoNarrating] = useState(false);
+  const [currentNarratingStep, setCurrentNarratingStep] = useState<number | null>(null);
+  const [emergencyContacts, setEmergencyContacts] = useState<string[]>([]);
+  const [showContactsModal, setShowContactsModal] = useState(false);
 
-  const steps = FIRST_AID_STEPS[type || 'other'] || FIRST_AID_STEPS.other;
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string>(type || EmergencyCategory.OTHER);
 
-  // 1. Capture Location and Create Record
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Initial Location Capture & Contacts
   useEffect(() => {
-    const initEmergency = async () => {
-      try {
-        // Try to get location
-        navigator.geolocation.getCurrentPosition(
-          async (pos) => {
-            const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            setLocation(loc);
-            
-            // Create initial record
-            const docRef = await addDoc(collection(db, 'emergencies'), {
-              userId: auth.currentUser?.uid,
-              type: type || EmergencyCategory.OTHER,
-              severity: SeverityLevel.HIGH, // Default
-              location: loc,
-              timestamp: serverTimestamp(),
-              status: 'active',
-              assistanceSteps: [0]
-            });
-            setEmergencyId(docRef.id);
-            setLoading(false);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      (err) => console.error("Location error", err)
+    );
 
-            // Send SMS alerts to emergency contacts (Mocking backend call)
-            sendAlerts(loc, type || 'Emergency');
-          },
-          (err) => {
-            console.error("Location error", err);
-            setLoading(false);
+    const fetchContacts = async () => {
+      if (auth.currentUser) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', auth.currentUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            if (data.emergencyContacts) {
+              setEmergencyContacts(data.emergencyContacts.filter((c: string) => c.trim() !== ''));
+            }
           }
-        );
-      } catch (err) {
-        console.error("Init error", err);
-        setLoading(false);
+        } catch (err) {
+          console.error("Error fetching contacts", err);
+        }
       }
     };
+    fetchContacts();
+  }, []);
 
-    initEmergency();
-  }, [type]);
-
-  // 2. Narration for each step
+  // Auto-scroll chat
   useEffect(() => {
-    if (!loading && steps[step]) {
-      speak(steps[step].narration);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [step, loading]);
+  }, [chatHistory]);
 
-  const sendAlerts = async (loc: any, emType: string) => {
-    // In a real app, we'd fetch contacts from the user profile and call our /api/alert
-    try {
-      const userDoc = await getDoc(doc(db, 'users', auth.currentUser?.uid || ''));
-      const contacts = userDoc.data()?.emergencyContacts || [];
-      
-      const message = `RESCUAI SOS: ${emType} reported at https://www.google.com/maps?q=${loc.lat},${loc.lng}. Timestamp: ${new Date().toLocaleString()}`;
-      
-      for (const phone of contacts) {
-        await fetch('/api/alert', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: phone, message })
-        });
-      }
-    } catch (err) {
-      console.warn("Could not send automated alerts", err);
-    }
-  };
-
-  const handleNext = () => {
-    if (step < steps.length - 1) {
-      setStep(step + 1);
-    } else {
-      navigate('/');
-    }
-  };
-
-  const handleRepeat = () => {
-    speak(steps[step].narration);
-  };
-
-  const handleVoiceInput = () => {
-    startListening();
-    setIsCapturing(true);
-  };
-
+  // Auto-Narration Logic
   useEffect(() => {
-    if (transcript && isCapturing) {
-      setNotes(prev => prev + ' ' + transcript);
-      setIsCapturing(false);
-      // AI Triage
-      classifyEmergency(transcript).then(res => {
-        setSeverity(res.severity);
+    let timeout: NodeJS.Timeout;
+    if (isAutoNarrating && aiAdvice.length > 0) {
+      const narrateNext = (index: number) => {
+        if (index < aiAdvice.length) {
+          setCurrentNarratingStep(index);
+          const step = aiAdvice[index];
+          speak(step.narration || step.description, language.bcp47);
+          
+          const text = step.narration || step.description;
+          const wordCount = text.split(' ').length;
+          const duration = Math.max(4000, (wordCount / 2.5) * 1000 + 2000);
+          
+          timeout = setTimeout(() => {
+            narrateNext(index + 1);
+          }, duration);
+        } else {
+          setIsAutoNarrating(false);
+          setCurrentNarratingStep(null);
+          speak("All instructions completed. Please stay calm and wait for professional help.", language.bcp47);
+        }
+      };
+
+      narrateNext(0);
+    }
+    return () => clearTimeout(timeout);
+  }, [isAutoNarrating, aiAdvice]);
+
+  // Fetch visuals for steps
+  useEffect(() => {
+    if (aiAdvice.length > 0) {
+      aiAdvice.forEach((step, idx) => {
+        if (!step.visualUrl && step.visualPrompt && !loadingIndices.current.has(idx)) {
+          loadingIndices.current.add(idx);
+          setVisualsLoading(prev => ({ ...prev, [idx]: true }));
+          
+          generateVisual(step.visualPrompt).then(url => {
+            if (url) {
+              setAiAdvice(prev => {
+                const updated = [...prev];
+                updated[idx] = { ...updated[idx], visualUrl: url };
+                return updated;
+              });
+            }
+            setVisualsLoading(prev => ({ ...prev, [idx]: false }));
+          });
+        }
       });
     }
-  }, [transcript]);
+  }, [aiAdvice]);
 
-  if (loading) {
+  const handleLanguageSelect = (lang: typeof LANGUAGES[0]) => {
+    setLanguage(lang);
+    setFlow('input');
+  };
+
+  const handleImageCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const startAnalysis = async () => {
+    if (!description && !image) return;
+    setFlow('analyzing');
+    
+    try {
+      const docRef = await addDoc(collection(db, 'emergencies'), {
+        userId: auth.currentUser?.uid,
+        type: type || EmergencyCategory.OTHER,
+        severity: SeverityLevel.HIGH,
+        location,
+        timestamp: serverTimestamp(),
+        status: 'active',
+        language: language.name,
+        description,
+        imageUrl: image
+      });
+      setEmergencyId(docRef.id);
+
+      const analysis = await analyzeEmergency(description, image || undefined, language.name);
+      setSeverity(analysis.severity);
+      setAiAdvice(analysis.firstAidAdvice);
+      setLocalizedSummary(analysis.localizedSummary);
+      setActiveCategory(analysis.category);
+      
+      await updateDoc(docRef, {
+        severity: analysis.severity,
+        firstAidAdvice: analysis.firstAidAdvice,
+        type: analysis.category
+      });
+
+      setFlow('guidance');
+      speak(analysis.localizedSummary, language.bcp47);
+    } catch (err) {
+      console.error("Analysis Error:", err);
+      setFlow('guidance');
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !emergencyId) return;
+    
+    const userMsg: ChatMessage = { role: 'user', text: chatInput, timestamp: Date.now() };
+    setChatHistory(prev => [...prev, userMsg]);
+    setChatInput('');
+    setIsChatLoading(true);
+
+    try {
+      const response = await getAIChatResponse(chatHistory, chatInput, language.name, description);
+      const aiMsg: ChatMessage = { role: 'model', text: response, timestamp: Date.now() };
+      setChatHistory(prev => [...prev, aiMsg]);
+      
+      await updateDoc(doc(db, 'emergencies', emergencyId), {
+        chatHistory: arrayUnion(userMsg, aiMsg)
+      });
+    } catch (err) {
+      console.error("Chat error", err);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  // Sync voice transcript
+  useEffect(() => {
+    if (flow === 'input' && transcript && isListening) {
+      setDescription(prev => prev + ' ' + transcript);
+    }
+  }, [transcript, flow]);
+
+  if (flow === 'language') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 p-6">
-        <div className="relative mb-8">
-          <div className="w-24 h-24 bg-red-200 rounded-full animate-ping absolute"></div>
-          <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center relative shadow-xl">
-            <AlertTriangle className="text-white" size={40} />
+      <div className="min-h-screen bg-slate-900 p-8 flex flex-col justify-center">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-white text-center mb-12"
+        >
+          <div className="w-20 h-20 bg-red-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-red-600/20">
+            <Globe size={40} className="text-white" />
+          </div>
+          <h1 className="text-4xl font-black tracking-tighter uppercase mb-2 font-display leading-tight">SELECT_PROTO_LANG</h1>
+          <p className="text-white/40 font-mono text-[9px] uppercase tracking-[0.4em]">Identify secure communication channel</p>
+        </motion.div>
+
+        <div className="grid grid-cols-2 gap-4 max-w-sm mx-auto w-full">
+          {LANGUAGES.map((lang, i) => (
+            <motion.button
+              key={lang.code}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: i * 0.05 }}
+              onClick={() => handleLanguageSelect(lang)}
+              className="bg-white/5 hover:bg-white text-white hover:text-slate-900 p-6 rounded-[2rem] border border-white/5 transition-all text-left group active:scale-95"
+            >
+              <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 group-hover:opacity-100 font-mono">{lang.name}</p>
+              <p className="text-2xl font-black leading-none font-display">{lang.label}</p>
+            </motion.button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (flow === 'input') {
+    return (
+      <div className="min-h-screen bg-white flex flex-col">
+        <header className="bg-slate-900 p-6 text-white pt-16 pb-12 shrink-0">
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+             <p className="text-red-500 font-mono text-[9px] font-black uppercase tracking-[0.4em] mb-2">INPUT_PHASE_01</p>
+             <h1 className="text-4xl font-black tracking-tighter uppercase font-display leading-none">Describe Situation</h1>
+             <p className="text-white/40 text-[10px] font-medium mt-2 leading-relaxed max-w-xs uppercase tracking-widest">Multi-modal triage active: Text, Voice, or Vision</p>
+          </motion.div>
+        </header>
+
+        <div className="flex-1 p-6 space-y-6 -mt-8">
+          <div className="relative tech-card p-2 bg-white ring-8 ring-slate-900/5">
+            <textarea
+              className="w-full h-56 bg-slate-50 border-none rounded-[1.5rem] p-6 font-semibold text-lg focus:ring-0 outline-none resize-none placeholder:text-slate-300"
+              placeholder="What happened? Where are you hurt?"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+            <button 
+              onClick={() => startListening(language.bcp47)}
+              className={`absolute bottom-6 right-6 p-5 rounded-2xl shadow-xl transition-all duration-300 ${isListening ? 'bg-red-600 text-white scale-110' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
+            >
+              <Mic size={24} />
+            </button>
+          </div>
+
+          <div className="flex gap-4">
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 bg-slate-50 border border-slate-100 rounded-[2rem] p-8 flex flex-col items-center gap-3 group active:scale-95 transition-all hover:bg-slate-100"
+            >
+              {image ? (
+                <div className="relative w-full h-24 rounded-2xl overflow-hidden shadow-lg">
+                   <img src={image} className="w-full h-full object-cover" alt="Emergency" />
+                   <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                     <RotateCcw className="text-white" size={24} />
+                   </div>
+                </div>
+              ) : (
+                <>
+                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center shadow-sm text-slate-400 group-hover:text-red-600 transition-colors">
+                    <Camera size={28} />
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Capture Scene</span>
+                </>
+              )}
+            </button>
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageCapture} />
           </div>
         </div>
-        <h2 className="text-2xl font-black text-red-900 tracking-tighter uppercase mb-2">Activating SOS</h2>
-        <p className="text-red-700 font-medium text-center">Capturing location and notifying emergency contacts...</p>
+
+        <div className="p-6 pb-12 bg-white">
+          <button
+            onClick={startAnalysis}
+            disabled={!description && !image}
+            className="w-full py-6 bg-red-600 text-white rounded-3xl font-black text-xl tracking-[0.1em] shadow-2xl shadow-red-600/30 active:scale-95 transition-all disabled:opacity-20 uppercase font-display"
+          >
+            EXECUTE_ANALYSIS
+          </button>
+          <button 
+            onClick={() => setFlow('language')}
+            className="w-full mt-6 text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] hover:text-slate-900 transition-colors"
+          >
+            Reconfigure Language
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (flow === 'analyzing') {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-8">
+        <div className="relative mb-12">
+           <motion.div 
+             animate={{ scale: [1, 1.3, 1], opacity: [0.1, 0.3, 0.1] }}
+             transition={{ repeat: Infinity, duration: 2 }}
+             className="w-48 h-48 bg-red-600 rounded-full absolute -inset-8"
+           />
+           <div className="w-32 h-32 bg-white rounded-[2.5rem] flex items-center justify-center shadow-2xl relative">
+              <Activity size={56} className="text-red-600" strokeWidth={2.5} />
+           </div>
+        </div>
+        <h2 className="text-4xl font-black text-white tracking-tighter uppercase font-display mb-3">Analyzing...</h2>
+        <div className="flex flex-col items-center gap-4">
+           <p className="text-white/40 font-mono text-[9px] font-black uppercase tracking-[0.4em] text-center max-w-xs leading-relaxed">
+             Syncing incident data for clinical triage in {language.name}
+           </p>
+           <div className="w-48 h-1 bg-white/5 rounded-full overflow-hidden">
+              <motion.div 
+                animate={{ x: ['-100%', '100%'] }}
+                transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                className="w-1/2 h-full bg-red-600 shadow-[0_0_15px_#dc2626]"
+              />
+           </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      {/* Emergency Header */}
-      <div className="bg-red-600 p-6 text-white pt-10 pb-8 flex justify-between items-start shrink-0">
-        <div>
-          <span className="text-xs font-bold uppercase tracking-[0.2em] opacity-80 mb-1 block">Active Emergency</span>
-          <h1 className="text-3xl font-black tracking-tight capitalize">{type}</h1>
-          <div className="flex items-center gap-2 mt-2">
-            <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-bold tracking-widest ${
-              severity === SeverityLevel.CRITICAL ? 'bg-black text-white' : 'bg-white/20'
-            }`}>
-              {severity} SEVERITY
-            </span>
+    <div className="bg-[var(--color-medical-bg)] flex flex-col h-screen overflow-hidden relative">
+      <header className="bg-slate-900 px-6 pt-16 pb-8 text-white shrink-0 relative overflow-hidden z-30 shadow-2xl">
+        <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+        
+        <div className="flex justify-between items-start mb-6 relative z-10">
+          <div className="space-y-1">
+            <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Live Active Incident</span>
+            </motion.div>
+            <h1 className="text-4xl font-black tracking-tighter uppercase font-display leading-none">{type || 'Emergency'}</h1>
+            <p className="text-white/50 font-mono text-[10px] tracking-tight">INCIDENT_ID_{emergencyId?.slice(-6).toUpperCase() || 'PND'}</p>
+          </div>
+          
+          <div className="flex flex-col items-end gap-3">
+             <motion.div 
+               animate={{ backgroundColor: severity === SeverityLevel.CRITICAL ? '#dc2626' : 'rgba(255,255,255,0.1)' }}
+               className={`px-4 py-2 rounded-xl text-[10px] font-black tracking-[0.2em] border border-white/10 shadow-2xl`}
+             >
+                {severity} SEVERITY
+             </motion.div>
+             {aiAdvice.length > 0 && (
+               <button 
+                 onClick={() => setIsAutoNarrating(!isAutoNarrating)}
+                 className={`group flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.15em] transition-all duration-300 ${isAutoNarrating ? 'bg-red-600 text-white shadow-xl scale-105' : 'bg-white/5 hover:bg-white/10 border border-white/10'}`}
+               >
+                 {isAutoNarrating ? <Pause size={14} className="fill-current" /> : <Volume2 size={14} />}
+                 {isAutoNarrating ? 'Active Voice' : 'Start Voice Guide'}
+               </button>
+             )}
           </div>
         </div>
-        <button 
-          onClick={() => navigate('/')}
-          className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors"
-        >
-          <XCircle size={24} />
+        
+        <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-sm font-medium leading-relaxed text-white/80 max-w-xl border-l-2 border-red-600 pl-4 py-1">
+          {localizedSummary}
+        </motion.p>
+        
+        <button onClick={() => navigate('/')} className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors">
+          <RotateCcw size={20} />
         </button>
-      </div>
+      </header>
 
-      {/* Progress Bar */}
-      <div className="h-1 bg-gray-100 flex">
-        {steps.map((_, idx) => (
-          <div 
-            key={idx} 
-            className={`flex-1 transition-all duration-500 ${idx <= step ? 'bg-red-600' : 'bg-transparent'}`}
-          />
-        ))}
-      </div>
-
-      {/* Guidance Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-10 flex flex-col items-center justify-center">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={step}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="text-center"
-          >
-            {/* Action Icon/Visual */}
-            <div className="w-32 h-32 bg-gray-50 rounded-full flex items-center justify-center mb-8 mx-auto border-4 border-gray-100">
-               <motion.div
-                 animate={{ scale: [1, 1.05, 1] }}
-                 transition={{ repeat: Infinity, duration: 2 }}
-               >
-                 <Play className="text-red-600 fill-red-600" size={48} />
-               </motion.div>
+      <div className="flex-1 overflow-y-auto flex flex-col no-scrollbar z-10">
+        <div className="p-6 pt-10 pb-40 space-y-10">
+          <section>
+          <div className="flex justify-between items-center mb-6 px-1">
+            <div className="flex items-center gap-2">
+              <Activity size={16} className="text-red-500" />
+              <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Operational Protocol</h2>
             </div>
-            
-            <h3 className="text-xs font-bold uppercase tracking-widest text-red-600 mb-4">Step {step + 1} of {steps.length}</h3>
-            <p className="text-2xl font-semibold text-gray-900 leading-tight">
-              {steps[step].text}
-            </p>
-          </motion.div>
-        </AnimatePresence>
-      </div>
-
-      {/* Auxiliary Inputs */}
-      <div className="px-6 mb-8 flex gap-4">
-        <button 
-          onClick={handleVoiceInput}
-          className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-2xl border ${
-            isListening ? 'bg-red-50 border-red-200 text-red-600' : 'bg-gray-50 border-gray-100 text-gray-600'
-          }`}
-        >
-          <Mic size={24} className={isListening ? 'animate-pulse' : ''} />
-          <span className="text-[10px] font-bold uppercase tracking-widest">
-            {isListening ? 'Listening...' : 'Voice Note'}
-          </span>
-        </button>
-        <button 
-          onClick={() => alert("Image upload triggered")}
-          className="flex-1 flex flex-col items-center gap-2 p-4 rounded-2xl bg-gray-50 border border-gray-100 text-gray-600"
-        >
-          <Camera size={24} />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Add Photo</span>
-        </button>
-      </div>
-
-      {/* Bottom Controls */}
-      <div className="p-6 bg-gray-50 border-t border-gray-200">
-        <div className="flex gap-4">
-          <button
-            onClick={handleRepeat}
-            className="w-20 h-20 bg-white border border-gray-200 rounded-full flex items-center justify-center text-gray-600 shadow-sm active:scale-95 transition-transform"
-          >
-            <RotateCcw size={24} />
-          </button>
+            <div className="flex items-center gap-2 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+               <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Guide Synchronized</span>
+            </div>
+          </div>
           
-          <button
-            onClick={handleNext}
-            className="flex-1 h-20 bg-black text-white rounded-full flex items-center justify-between px-8 font-black text-xl tracking-tighter shadow-xl active:scale-95 transition-transform"
-          >
-            <span>{step === steps.length - 1 ? 'FINISH' : 'NEXT STEP'}</span>
-            <ChevronRight size={32} />
-          </button>
-        </div>
+          <div className="space-y-10">
+             {aiAdvice.map((step, idx) => {
+               const Icon = ICON_MAP[step.icon || 'AlertCircle'] || AlertCircle;
+               const isNarrating = currentNarratingStep === idx;
+               return (
+                 <motion.div 
+                   key={idx}
+                   initial={{ opacity: 0, y: 30 }}
+                   whileInView={{ opacity: 1, y: 0 }}
+                   viewport={{ once: true, margin: "-50px" }}
+                   animate={{ scale: isNarrating ? 1.02 : 1, borderColor: isNarrating ? '#dc2626' : '#f1f5f9' }}
+                   className={`tech-card overflow-hidden transition-all duration-500 bg-white border-2 border-slate-100 ${isNarrating ? 'ring-8 ring-red-600/5 border-red-600' : 'shadow-lg shadow-slate-200/50'}`}
+                 >
+                    {/* Visual Section */}
+                    <div className="relative aspect-video max-h-[400px] w-full bg-slate-50 flex items-center justify-center overflow-hidden border-b border-slate-100">
+                       {step.visualUrl ? (
+                         <motion.img 
+                           initial={{ opacity: 0 }} 
+                           animate={{ opacity: 1 }} 
+                           src={step.visualUrl} 
+                           className="w-full h-full object-cover" 
+                           alt={step.title} 
+                           referrerPolicy="no-referrer" 
+                         />
+                       ) : (
+                         <div className="relative w-full h-full flex items-center justify-center">
+                           <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+                           <motion.div animate={{ top: ['0%', '100%'] }} transition={{ duration: 3, repeat: Infinity, ease: "linear" }} className="absolute left-0 right-0 h-[1x] bg-red-600/30 z-10" />
+                           <div className="relative z-20 flex flex-col items-center gap-6">
+                             <div className="relative">
+                               <motion.div animate={{ scale: [0.98, 1.02, 0.98], opacity: [0.1, 0.3, 0.1] }} transition={{ duration: 2.5, repeat: Infinity }}>
+                                 <Icon className="text-slate-900" size={120} strokeWidth={0.5} />
+                               </motion.div>
+                               <div className="absolute inset-0 flex items-center justify-center">
+                                  <div className="w-10 h-10 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                               </div>
+                             </div>
+                             <div className="text-center">
+                               <p className="font-mono text-[8px] font-black uppercase tracking-[0.6em] text-red-600 opacity-40">GENERATING_VISUAL_PROTOCOL</p>
+                             </div>
+                           </div>
+                         </div>
+                       )}
+                       
+                       {/* Floating Step Badge */}
+                       <div className="absolute top-6 left-6 flex items-center gap-2">
+                          <div className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl border backdrop-blur-xl ${isNarrating ? 'bg-red-600 text-white border-red-500' : 'bg-slate-900/90 text-white border-white/10'}`}>
+                             Step {idx + 1}
+                          </div>
+                          {isNarrating && (
+                            <motion.div 
+                              animate={{ scale: [1, 1.2, 1] }} 
+                              transition={{ repeat: Infinity, duration: 1 }}
+                              className="w-2 h-2 bg-red-500 rounded-full shadow-[0_0_10px_#ef4444]" 
+                            />
+                          )}
+                       </div>
+                    </div>
 
-        <div className="mt-8 flex items-center justify-center gap-6">
-           <a href="tel:112" className="flex items-center gap-2 text-red-600 font-bold uppercase tracking-widest text-xs">
-             <PhoneCall size={16} />
-             Call Emergency (112)
-           </a>
-           <div className="h-4 w-px bg-gray-200"></div>
-           <button 
-             onClick={() => navigate('/hospitals')}
-             className="flex items-center gap-2 text-gray-600 font-bold uppercase tracking-widest text-xs"
-           >
-             <MapPin size={16} />
-             Hospitals
-           </button>
-        </div>
+                    {/* Content Section */}
+                    <div className="p-10 space-y-5">
+                       <div className="flex items-start gap-5">
+                          <div className={`w-14 h-14 rounded-[1.25rem] flex items-center justify-center border-2 transition-all ${isNarrating ? 'bg-red-50 border-red-200 text-red-600 shadow-lg shadow-red-600/10' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                            <Icon size={28} />
+                          </div>
+                          <div className="flex-1">
+                             <h3 className="text-3xl font-black text-slate-900 leading-none uppercase tracking-tighter font-display mb-3">{step.title}</h3>
+                             <div className="h-1.5 w-16 bg-red-600 rounded-full mb-6" />
+                             <p className="text-lg text-slate-800 font-bold leading-[1.6]">{step.description}</p>
+                          </div>
+                       </div>
+                    </div>
+                 </motion.div>
+               );
+             })}
+          </div>
+        </section>
+
+        {aiAdvice.length > 0 && emergencyContacts.length > 0 && (
+          <motion.section 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="px-1"
+          >
+            <div className="bg-red-600 rounded-[2.5rem] p-8 shadow-2xl shadow-red-600/30 text-white relative overflow-hidden group">
+               <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
+                  <Users size={120} strokeWidth={1} />
+               </div>
+               <div className="relative z-10">
+                  <p className="text-[10px] font-black uppercase tracking-[0.4em] mb-4 opacity-60">Personal_Safety_Network</p>
+                  <h3 className="text-3xl font-black uppercase tracking-tighter font-display leading-tight mb-6">Reach Your Registered Emergency Contacts</h3>
+                  <p className="text-sm font-medium opacity-80 mb-8 max-w-sm leading-relaxed italic">Guidance protocol is steady. You may now establish direct audio links with your priority fallback network.</p>
+                  
+                  <button 
+                    onClick={() => setShowContactsModal(true)}
+                    className="w-full h-18 bg-white text-red-600 rounded-3xl font-black text-lg shadow-xl flex items-center justify-center gap-4 transition-all active:scale-95 group-hover:bg-red-50"
+                  >
+                    <div className="w-10 h-10 bg-red-50 rounded-2xl flex items-center justify-center text-red-600">
+                      <Users size={20} strokeWidth={2.5} />
+                    </div>
+                    CALL_EMERGENCY_CONTACTS
+                  </button>
+               </div>
+            </div>
+          </motion.section>
+        )}
+
+        <section className="flex-1 flex flex-col min-h-[500px]">
+          <div className="flex justify-between items-center mb-4 px-1">
+            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-2">
+              <MessageSquare size={14} />
+              Support Terminal
+            </h2>
+            <span className="font-mono text-[9px] text-slate-300">SECURE_CHANNEL_ACTIVE</span>
+          </div>
+          
+          <div className="flex-1 flex flex-col bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-2xl">
+             <div className="flex-1 overflow-y-auto p-8 space-y-6 flex flex-col" ref={scrollRef}>
+                <div className="bg-slate-50 text-slate-500 p-6 rounded-3xl text-sm font-medium leading-relaxed flex gap-4 items-start border border-slate-100 italic">
+                  <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center shrink-0">
+                    <Info size={18} className="text-slate-400" />
+                  </div>
+                  "Ask regarding procedure clarifications, clinical symptoms, or post-incident care. Our AI is monitoring this channel 24/7."
+                </div>
+                
+                <AnimatePresence mode="popLayout">
+                  {chatHistory.map((msg, i) => (
+                    <motion.div key={i} initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] p-5 rounded-3xl text-sm font-medium shadow-sm transition-all ${msg.role === 'user' ? 'bg-slate-900 text-white rounded-tr-none' : 'bg-white border border-slate-100 text-slate-700 rounded-tl-none'}`}>
+                        {msg.text}
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                
+                {isChatLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-50 p-6 rounded-3xl rounded-tl-none flex gap-2">
+                      <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 0.8 }} className="w-2 h-2 bg-slate-300 rounded-full" />
+                      <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.2 }} className="w-2 h-2 bg-slate-300 rounded-full" />
+                      <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-2 h-2 bg-slate-300 rounded-full" />
+                    </div>
+                  </div>
+                )}
+             </div>
+
+             <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex gap-3">
+               <input className="flex-1 bg-white border border-slate-200 rounded-2xl px-6 font-medium text-sm outline-none focus:ring-4 focus:ring-slate-900/5 transition-all" placeholder="Type analytical query..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()} />
+               <button onClick={handleSendMessage} disabled={!chatInput.trim() || isChatLoading} className="w-14 h-14 bg-slate-900 text-white rounded-2xl flex items-center justify-center active:scale-95 disabled:opacity-50 transition-all">
+                 <Send size={22} />
+               </button>
+             </div>
+          </div>
+        </section>
       </div>
+    </div>
+
+      <footer className="p-6 bg-white border-t border-slate-100 grid grid-cols-[1fr,64px] gap-4 shrink-0 shadow-[0_-20px_50px_rgba(0,0,0,0.1)] relative z-30">
+          <a 
+            href={`tel:${SERVICE_NUMBERS[activeCategory]?.number || '112'}`} 
+            className={`btn-emergency h-16 transition-all duration-500 scale-100 ${activeCategory === EmergencyCategory.FIRE ? 'bg-orange-600 animate-pulse' : ''}`}
+          >
+            <PhoneCall size={20} strokeWidth={2.5} />
+            DIAL_{SERVICE_NUMBERS[activeCategory]?.label || 'EMERGENCY_LINK'}
+          </a>
+          <button onClick={() => navigate('/hospitals')} className="w-full h-16 bg-slate-100 hover:bg-slate-200 rounded-2xl flex items-center justify-center text-slate-900 transition-all active:scale-95 border border-slate-200">
+            <MapPin size={24} strokeWidth={2.5} />
+          </button>
+      </footer>
+
+      {/* Emergency Contacts Modal */}
+      <AnimatePresence>
+        {showContactsModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-xl z-[100] flex items-end p-6"
+          >
+            <motion.div
+              initial={{ y: 100, scale: 0.9 }}
+              animate={{ y: 0, scale: 1 }}
+              exit={{ y: 100, scale: 0.9 }}
+              className="bg-white w-full rounded-[3rem] p-8 pb-12 shadow-2xl relative overflow-hidden"
+            >
+               <div className="flex justify-between items-start mb-8">
+                  <div>
+                    <p className="text-red-500 font-mono text-[9px] font-black uppercase tracking-[0.4em] mb-2">NETWORK_HANDSHAKE_READY</p>
+                    <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter font-display leading-tight">SELECT_CHANNEL</h2>
+                  </div>
+                  <button 
+                    onClick={() => setShowContactsModal(false)}
+                    className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:text-slate-900 transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+               </div>
+               
+               <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2 no-scrollbar">
+                 {/* Official Services Section */}
+                 <div className="space-y-3">
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Official_Service_Channels</p>
+                   {Object.entries(SERVICE_NUMBERS).map(([cat, info]) => {
+                     const isMatch = cat === activeCategory;
+                     const Icon = info.icon;
+                     return (
+                       <a
+                         key={cat}
+                         href={`tel:${info.number}`}
+                         className={`flex items-center gap-5 p-6 rounded-[2.5rem] border transition-all group active:scale-[0.98] ${isMatch ? 'bg-red-600 border-red-500 text-white shadow-2xl shadow-red-600/20' : 'bg-slate-50 border-slate-100 hover:bg-slate-950 hover:text-white'}`}
+                       >
+                         <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm transition-all ${isMatch ? 'bg-white text-red-600' : 'bg-white text-slate-400 group-hover:bg-red-600 group-hover:text-white'}`}>
+                           <Icon size={24} strokeWidth={2.5} />
+                         </div>
+                         <div className="flex flex-col">
+                            <p className={`text-[10px] font-black uppercase tracking-[0.2em] mb-1 ${isMatch ? 'text-white/60' : 'text-slate-400 group-hover:text-white/40'}`}>{info.label}</p>
+                            <span className="font-black text-2xl tracking-tighter font-display uppercase leading-none">{info.number}</span>
+                         </div>
+                         {isMatch && (
+                           <div className="ml-auto bg-white/20 px-3 py-1.5 rounded-xl">
+                              <span className="text-[8px] font-black uppercase tracking-widest leading-none">Detected</span>
+                           </div>
+                         )}
+                       </a>
+                     );
+                   })}
+                 </div>
+
+                 <div className="h-px bg-slate-100 mx-4 my-2" />
+
+                 {/* Personal Contacts Section */}
+                 <div className="space-y-3">
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Personal_Fallback_Network</p>
+                   {emergencyContacts.map((contact, i) => (
+                   <a
+                     key={i}
+                     href={`tel:${contact}`}
+                     className="flex items-center gap-5 p-6 bg-slate-50 rounded-[2.5rem] border border-slate-100 hover:bg-slate-950 hover:text-white transition-all group active:scale-[0.98]"
+                   >
+                     <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-red-600 shadow-sm group-hover:bg-red-600 group-hover:text-white transition-all">
+                       <PhoneCall size={24} strokeWidth={2.5} />
+                     </div>
+                     <div className="flex flex-col">
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1 group-hover:text-white/40">Priority_Link_{i + 1}</p>
+                        <span className="font-black text-2xl tracking-tighter font-display uppercase leading-none">{contact}</span>
+                     </div>
+                     <div className="ml-auto w-10 h-10 rounded-full border border-slate-200 flex items-center justify-center group-hover:border-white/20 transition-colors">
+                        <ChevronRight className="opacity-40" size={18} />
+                     </div>
+                   </a>
+                 ))}
+               </div>
+             </div>
+
+             <button 
+                 onClick={() => setShowContactsModal(false)}
+                 className="w-full mt-8 py-6 text-slate-400 font-black uppercase text-[10px] tracking-[0.3em] hover:text-slate-900 transition-colors"
+               >
+                 ABORT_SATELLITE_LINK
+               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

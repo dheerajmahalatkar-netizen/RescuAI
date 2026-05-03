@@ -4,23 +4,23 @@ export function useSpeech() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
 
-  const speak = (text: string, lang: string = 'en-US') => {
+  const speak = (text: string, langCode: string = 'en-US') => {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang;
+    utterance.lang = langCode;
     window.speechSynthesis.speak(utterance);
   };
 
-  const startListening = () => {
+  const startListening = (langCode: string = 'en-US') => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert("Speech recognition not supported in this browser.");
+      console.warn("Speech recognition not supported in this browser.");
       return;
     }
 
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = langCode;
 
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
@@ -33,5 +33,7 @@ export function useSpeech() {
     recognition.start();
   };
 
-  return { speak, startListening, isListening, transcript };
+  const clearTranscript = () => setTranscript('');
+
+  return { speak, startListening, clearTranscript, isListening, transcript };
 }

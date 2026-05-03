@@ -37,12 +37,8 @@ service cloud.firestore {
     }
 
     function isValidEmergency(data) {
-      return data.keys().hasAll(['userId', 'type', 'location', 'timestamp', 'status'])
-             && data.userId == request.auth.uid
-             && data.type in ['medical', 'accident', 'fire', 'breathing', 'bleeding', 'other']
-             && data.location.latitude is number
-             && data.location.longitude is number
-             && data.timestamp is timestamp
+      return data.userId == request.auth.uid
+             && data.type is string
              && data.status in ['active', 'resolved', 'cancelled'];
     }
 
@@ -55,13 +51,17 @@ service cloud.firestore {
     }
 
     match /emergencies/{emergencyId} {
-      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow get: if true; // Public access for tracking links
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow create: if isSignedIn() && isValidEmergency(incoming());
       allow update: if isSignedIn() && existing().userId == request.auth.uid && (
-        // Action: Update details
-        (incoming().diff(existing()).affectedKeys().hasOnly(['description', 'voiceInput', 'imageUrl', 'type', 'severity', 'status', 'assistancesteps']))
-      ) && isValidEmergency(incoming());
+        // Action: Update details or location
+        (incoming().diff(existing()).affectedKeys().hasOnly([
+          'description', 'voiceInput', 'imageUrl', 'type', 'severity', 'status', 
+          'assistanceSteps', 'location', 'updatedAt', 'notes', 'firstAidAdvice', 
+          'language', 'chatHistory'
+        ]))
+      ) && incoming().userId == existing().userId;
     }
 
     function isAdmin() {

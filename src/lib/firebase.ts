@@ -1,11 +1,21 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
+import { 
+  getAuth, 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  GoogleAuthProvider, 
+  signInWithPopup,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, collection } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+
+const googleProvider = new GoogleAuthProvider();
 
 // Connectivity check as per instructions
 async function testConnection() {
@@ -20,4 +30,11 @@ async function testConnection() {
 }
 testConnection();
 
-export { RecaptchaVerifier, signInWithPhoneNumber };
+export { 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  googleProvider, 
+  signInWithPopup,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+};
